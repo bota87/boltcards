@@ -1,37 +1,48 @@
 import asyncio
 
 from fastapi import APIRouter
-from starlette.staticfiles import StaticFiles
+from loguru import logger
 
-from lnbits.db import Database
-from lnbits.helpers import template_renderer
-from lnbits.tasks import catch_everything_and_restart
-
-db = Database("ext_boltcards")
+from .crud import db
+from .tasks import wait_for_paid_invoices
+from .views import boltcards_generic_router
+from .views_api import boltcards_api_router
+from .views_lnurl import boltcards_lnurl_router
 
 boltcards_static_files = [
     {
         "path": "/boltcards/static",
-        "app": StaticFiles(packages=[("lnbits", "extensions/boltcards/static")]),
         "name": "boltcards_static",
     }
 ]
 
 boltcards_ext: APIRouter = APIRouter(prefix="/boltcards", tags=["boltcards"])
+boltcards_ext.include_router(boltcards_generic_router)
+boltcards_ext.include_router(boltcards_api_router)
+boltcards_ext.include_router(boltcards_lnurl_router)
+
+scheduled_tasks: list[asyncio.Task] = []
 
 
-def boltcards_renderer():
-    return template_renderer(["lnbits/extensions/boltcards/templates"])
-
-
-from .lnurl import *  # noqa: F401,F403
-from .tasks import *  # noqa: F401,F403
+def boltcards_stop():
+    for task in scheduled_tasks:
+        try:
+            task.cancel()
+        except Exception as ex:
+            logger.warning(ex)
 
 
 def boltcards_start():
-    loop = asyncio.get_event_loop()
-    loop.create_task(catch_everything_and_restart(wait_for_paid_invoices))  # noqa: F405
+    from lnbits.tasks import create_permanent_unique_task
+
+    task = create_permanent_unique_task("ext_boltcards", wait_for_paid_invoices)
+    scheduled_tasks.append(task)
 
 
-from .views import *  # noqa: F401,F403
-from .views_api import *  # noqa: F401,F403
+__all__ = [
+    "db",
+    "boltcards_ext",
+    "boltcards_static_files",
+    "boltcards_start",
+    "boltcards_stop",
+]
